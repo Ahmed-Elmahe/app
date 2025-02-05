@@ -926,7 +926,7 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
         else:
             return url_for("static", filename="default-avatar.png")
 
-    def suggested_emails(self, website_name) -> (str, [str]):
+    def suggested_emails(self, website_name) -> Tuple[str, List[str]]:
         """return suggested email and other email choices"""
         website_name = convert_to_id(website_name)
 
@@ -944,7 +944,7 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
             list(set(all_aliases).difference({suggested_alias})),
         )
 
-    def suggested_names(self) -> (str, [str]):
+    def suggested_names(self) -> Tuple[str, List[str]]:
         """return suggested name and other name choices"""
         other_name = convert_to_id(self.name)
 
@@ -1064,7 +1064,7 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
     def two_factor_authentication_enabled(self) -> bool:
         return self.enable_otp or self.fido_enabled()
 
-    def get_communication_email(self) -> (Optional[str], str, bool):
+    def get_communication_email(self) -> Tuple[Optional[str], str, bool]:
         """
         Return
         - the email that user uses to receive email communication. None if user unsubscribes from newsletter
@@ -1098,7 +1098,7 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
 
     def available_sl_domains(
         self, alias_options: Optional[AliasOptions] = None
-    ) -> [str]:
+    ) -> List[str]:
         """
         Return all SimpleLogin domains that user can use when creating a new alias, including:
         - SimpleLogin public domains, available for all users (ALIAS_DOMAIN)
@@ -1147,7 +1147,7 @@ class User(Base, ModelMixin, UserMixin, PasswordOracle):
 
     def available_alias_domains(
         self, alias_options: Optional[AliasOptions] = None
-    ) -> [str]:
+    ) -> List[str]:
         """return all domains that user can use when creating a new alias, including:
         - SimpleLogin public domains, available for all users (ALIAS_DOMAIN)
         - SimpleLogin premium domains, only available for Premium accounts (PREMIUM_ALIAS_DOMAIN)
@@ -1368,7 +1368,7 @@ class Client(Base, ModelMixin):
     def nb_user(self):
         return ClientUser.filter_by(client_id=self.id).count()
 
-    def get_scopes(self) -> [Scope]:
+    def get_scopes(self) -> List[Scope]:
         # todo: client can choose which scopes they want to have access
         return [Scope.NAME, Scope.EMAIL, Scope.AVATAR_URL]
 
@@ -1639,7 +1639,7 @@ class Alias(Base, ModelMixin):
 
         return ret
 
-    def authorized_addresses(self) -> [str]:
+    def authorized_addresses(self) -> List[str]:
         """return addresses that can send on behalf of this alias, i.e. can send emails to this alias's reverse-aliases
         Including its mailboxes and their authorized addresses
         """
@@ -2879,7 +2879,7 @@ class Mailbox(Base, ModelMixin):
         Session.commit()
 
     @property
-    def aliases(self) -> [Alias]:
+    def aliases(self) -> List[Alias]:
         ret = dict(
             (alias.id, alias) for alias in Alias.filter_by(mailbox_id=self.id).all()
         )
@@ -3901,7 +3901,7 @@ class SyncEvent(Base, ModelMixin):
         return res.rowcount > 0
 
     @classmethod
-    def get_dead_letter(cls, older_than: Arrow, max_retries: int) -> [SyncEvent]:
+    def get_dead_letter(cls, older_than: Arrow, max_retries: int) -> List[SyncEvent]:
         return (
             SyncEvent.filter(
                 (
