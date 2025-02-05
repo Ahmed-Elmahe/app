@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 
 from deprecated import deprecated
 from flask import g
@@ -65,7 +65,7 @@ def get_aliases():
     if data:
         query = data.get("query")
 
-    alias_infos: [AliasInfo] = get_alias_infos_with_pagination(
+    alias_infos: List[AliasInfo] = get_alias_infos_with_pagination(
         user, page_id=page_id, query=query
     )
 
@@ -136,7 +136,7 @@ def get_aliases_v2():
     if data:
         query = data.get("query")
 
-    alias_infos: [AliasInfo] = get_alias_infos_with_pagination_v3(
+    alias_infos: List[AliasInfo] = get_alias_infos_with_pagination_v3(
         user, page_id=page_id, query=query, alias_filter=alias_filter
     )
 
