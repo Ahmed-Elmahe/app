@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 from arrow import Arrow
 from sqlalchemy import or_, func, case, and_
@@ -22,7 +22,7 @@ from app.models import (
 class AliasInfo:
     alias: Alias
     mailbox: Mailbox
-    mailboxes: [Mailbox]
+    mailboxes: List[Mailbox]
 
     nb_forward: int
     nb_blocked: int
@@ -115,7 +115,7 @@ def serialize_contact(contact: Contact, existed=False) -> dict:
     return res
 
 
-def get_alias_infos_with_pagination(user, page_id=0, query=None) -> [AliasInfo]:
+def get_alias_infos_with_pagination(user, page_id=0, query=None) -> List[AliasInfo]:
     ret = []
     q = (
         Session.query(Alias)
@@ -147,7 +147,7 @@ def get_alias_infos_with_pagination_v3(
     directory_id=None,
     page_limit=PAGE_LIMIT,
     page_size=PAGE_LIMIT,
-) -> [AliasInfo]:
+) -> List[AliasInfo]:
     q = construct_alias_query(user)
 
     if query:
@@ -291,7 +291,7 @@ def get_alias_info_v2(alias: Alias, mailbox=None) -> AliasInfo:
     return alias_info
 
 
-def get_alias_contacts(alias, page_id: int) -> [dict]:
+def get_alias_contacts(alias, page_id: int) -> List[dict]:
     q = (
         Contact.filter_by(alias_id=alias.id)
         .order_by(Contact.id.desc())
