@@ -1,7 +1,7 @@
 import pyotp
 from flask import jsonify, request
 from flask_login import login_user
-from itsdangerous import Signer
+from itsdangerous import Signer, BadSignature
 
 from app.api.base import api_bp
 from app.config import FLASK_SECRET
@@ -28,48 +28,54 @@ def auth_mfa():
             api_key: "a long string",
             email: "user email"
         }
-
     """
     data = request.get_json()
     if not data:
-        return jsonify(error="request body cannot be empty"), 400
+        return jsonify(error="Request body cannot be empty"), 400
 
     mfa_token = data.get("mfa_token")
     mfa_key = data.get("mfa_key")
     device = data.get("device")
 
+    # Validate required fields
+    if not all([mfa_token, mfa_key, device]):
+        return jsonify(error="Missing required fields"), 400
+
     s = Signer(FLASK_SECRET)
     try:
         user_id = int(s.unsign(mfa_key))
-    except Exception:
+    except (BadSignature, ValueError):
+        # Handle invalid or tampered mfa_key
         return jsonify(error="Invalid mfa_key"), 400
 
     user = User.get(user_id)
-
     if not user:
         return jsonify(error="Invalid mfa_key"), 400
     elif not user.enable_otp:
         return (
-            jsonify(error="This endpoint should only be used by user who enables MFA"),
+            jsonify(error="This endpoint should only be used by users who enable MFA"),
             400,
         )
 
+    # Verify the TOTP token
     totp = pyotp.TOTP(user.otp_secret)
     if not totp.verify(mfa_token, valid_window=2):
         send_invalid_totp_login_email(user, "TOTP")
         return jsonify(error="Wrong TOTP Token"), 400
 
+    # Prepare the response data
     ret = {"name": user.name or "", "email": user.email}
 
+    # Check if an API key already exists for the device
     api_key = ApiKey.get_by(user_id=user.id, name=device)
     if not api_key:
-        LOG.d("create new api key for %s and %s", user, device)
+        LOG.d("Create new API key for %s and %s", user, device)
         api_key = ApiKey.create(user.id, device)
         Session.commit()
 
     ret["api_key"] = api_key.code
 
-    # so user is logged in automatically on the web
+    # Log the user in automatically on the web
     login_user(user)
 
     return jsonify(**ret), 200

@@ -1,11 +1,9 @@
-from flask import g
-from flask import jsonify
-from flask import request
-
+from flask import g, request, jsonify
 from app.api.base import api_bp, require_api_auth
 from app.config import PAGE_LIMIT
 from app.db import Session
 from app.models import Notification
+from app.log import LOG
 
 
 @api_bp.route("/notifications", methods=["GET"])
@@ -27,37 +25,44 @@ def get_notifications():
         - created_at
     """
     user = g.user
-    try:
-        page = int(request.args.get("page"))
-    except (ValueError, TypeError):
-        return jsonify(error="page must be provided in request query"), 400
 
+    # Validate page parameter
+    try:
+        page = int(request.args.get("page", 0))
+        if page < 0:
+            raise ValueError("Page must be a non-negative integer")
+    except (ValueError, TypeError):
+        LOG.e(f"Invalid page parameter for user {user.email}")
+        return jsonify(error="Page must be a non-negative integer"), 400
+
+    # Fetch notifications
     notifications = (
         Notification.filter_by(user_id=user.id)
         .order_by(Notification.read, Notification.created_at.desc())
-        .limit(PAGE_LIMIT + 1)  # load a record more to know whether there's more
+        .limit(PAGE_LIMIT + 1)  # Load one extra record to check if there's more
         .offset(page * PAGE_LIMIT)
         .all()
     )
 
     have_more = len(notifications) > PAGE_LIMIT
 
-    return (
-        jsonify(
-            more=have_more,
-            notifications=[
-                {
-                    "id": notification.id,
-                    "message": notification.message,
-                    "title": notification.title,
-                    "read": notification.read,
-                    "created_at": notification.created_at.humanize(),
-                }
-                for notification in notifications[:PAGE_LIMIT]
-            ],
-        ),
-        200,
-    )
+    # Prepare response
+    response = {
+        "more": have_more,
+        "notifications": [
+            {
+                "id": notification.id,
+                "message": notification.message,
+                "title": notification.title,
+                "read": notification.read,
+                "created_at": notification.created_at.humanize(),
+            }
+            for notification in notifications[:PAGE_LIMIT]
+        ],
+    }
+
+    LOG.d(f"Fetched notifications for user {user.email}")
+    return jsonify(response), 200
 
 
 @api_bp.route("/notifications/<int:notification_id>/read", methods=["POST"])
@@ -69,15 +74,18 @@ def mark_as_read(notification_id):
         notification_id: in url
     Output:
         200 if updated successfully
-
     """
     user = g.user
     notification = Notification.get(notification_id)
 
+    # Validate notification
     if not notification or notification.user_id != user.id:
+        LOG.e(f"Unauthorized access to notification {notification_id} by user {user.email}")
         return jsonify(error="Forbidden"), 403
 
+    # Mark as read
     notification.read = True
     Session.commit()
 
+    LOG.d(f"Marked notification {notification_id} as read for user {user.email}")
     return jsonify(done=True), 200
