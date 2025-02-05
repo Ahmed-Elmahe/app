@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from flask_wtf import FlaskForm
 from unidecode import unidecode
+import tldextract
 
 from .config import WORDS_FILE_PATH, ALLOWED_REDIRECT_DOMAINS
 from .log import LOG
@@ -156,3 +157,7 @@ def debug_info(func):
 
 class CSRFValidationForm(FlaskForm):
     pass
+
+def get_hostname_prefix(hostname):
+    ext = tldextract.extract(hostname)
+    return convert_to_id(ext.domain)
