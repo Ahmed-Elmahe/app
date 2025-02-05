@@ -15,149 +15,122 @@ from app.models import ApiKey, File, PartnerUser, User
 from app.proton.proton_partner import get_proton_partner
 from app.session import logout_session
 from app.utils import random_string
+from app.log import LOG
 
 
 def get_connected_proton_address(user: User) -> Optional[str]:
+    """Retrieve the user's connected ProtonMail address if available."""
     proton_partner = get_proton_partner()
     partner_user = PartnerUser.get_by(user_id=user.id, partner_id=proton_partner.id)
-    if partner_user is None:
-        return None
-    return partner_user.partner_email
+    return partner_user.partner_email if partner_user else None
 
 
 def user_to_dict(user: User) -> dict:
-    ret = {
+    """Convert User object to a dictionary for JSON response."""
+    return {
         "name": user.name or "",
         "is_premium": user.is_premium(),
         "email": user.email,
         "in_trial": user.in_trial(),
         "max_alias_free_plan": user.max_alias_for_free_account(),
-        "connected_proton_address": None,
+        "connected_proton_address": get_connected_proton_address(user) if config.CONNECT_WITH_PROTON else None,
         "can_create_reverse_alias": user.can_create_contacts(),
+        "profile_picture_url": user.profile_picture.get_url() if user.profile_picture_id else None,
     }
 
-    if config.CONNECT_WITH_PROTON:
-        ret["connected_proton_address"] = get_connected_proton_address(user)
 
+def update_profile_picture(user: User, new_picture: Optional[str]):
+    """Helper function to handle profile picture updates."""
+    # Remove existing picture if set to null
     if user.profile_picture_id:
-        ret["profile_picture_url"] = user.profile_picture.get_url()
-    else:
-        ret["profile_picture_url"] = None
+        file = user.profile_picture
+        user.profile_picture_id = None
+        Session.flush()
+        if file:
+            File.delete(file.id)
+            s3.delete(file.path)
+            LOG.info("Profile picture deleted for user %s", user.email)
+        Session.flush()
 
-    return ret
+    # Set new profile picture if provided
+    if new_picture is not None:
+        raw_data = base64.decodebytes(new_picture.encode())
+        if detect_image_format(raw_data) == ImageFormat.Unknown:
+            return jsonify(error="Unsupported image format"), 400
+        file_path = random_string(30)
+        file = File.create(user_id=user.id, path=file_path)
+        Session.flush()
+        s3.upload_from_bytesio(file_path, BytesIO(raw_data))
+        user.profile_picture_id = file.id
+        LOG.info("Profile picture updated for user %s", user.email)
+        Session.flush()
 
 
 @api_bp.route("/user_info")
 @require_api_auth
 def user_info():
-    """
-    Return user info given the api-key
-
-    Output as json
-    - name
-    - is_premium
-    - email
-    - in_trial
-    - max_alias_free
-    - is_connected_with_proton
-    - can_create_reverse_alias
-    """
-    user = g.user
-
-    return jsonify(user_to_dict(user))
+    """Return user info given the API key."""
+    return jsonify(user_to_dict(g.user))
 
 
 @api_bp.route("/user_info", methods=["PATCH"])
 @require_api_auth
 def update_user_info():
     """
-    Input
-    - profile_picture (optional): base64 of the profile picture. Set to null to remove the profile picture
+    Update user info.
+    Input:
+    - profile_picture (optional): base64 of the profile picture. Set to null to remove it.
     - name (optional)
     """
     user = g.user
     data = request.get_json() or {}
 
+    # Update profile picture if provided
     if "profile_picture" in data:
-        if user.profile_picture_id:
-            file = user.profile_picture
-            user.profile_picture_id = None
-            Session.flush()
-            if file:
-                File.delete(file.id)
-                s3.delete(file.path)
-                Session.flush()
-        if data["profile_picture"] is not None:
-            raw_data = base64.decodebytes(data["profile_picture"].encode())
-            if detect_image_format(raw_data) == ImageFormat.Unknown:
-                return jsonify(error="Unsupported image format"), 400
-            file_path = random_string(30)
-            file = File.create(user_id=user.id, path=file_path)
-            Session.flush()
-            s3.upload_from_bytesio(file_path, BytesIO(raw_data))
-            user.profile_picture_id = file.id
-            Session.flush()
+        profile_update_response = update_profile_picture(user, data["profile_picture"])
+        if profile_update_response:
+            return profile_update_response
 
+    # Update name if provided
     if "name" in data:
         user.name = data["name"]
 
     Session.commit()
 
+    LOG.info("User info updated for %s", user.email)
     return jsonify(user_to_dict(user))
 
 
 @api_bp.route("/api_key", methods=["POST"])
 @require_api_auth
 def create_api_key():
-    """Used to create a new api key
-    Input:
-    - device
-
-    Output:
-    - api_key
-    """
+    """Create a new API key."""
     data = request.get_json()
-    if not data:
-        return jsonify(error="request body cannot be empty"), 400
+    if not data or "device" not in data:
+        return jsonify(error="Device name is required"), 400
 
-    device = data.get("device")
-
-    api_key = ApiKey.create(user_id=g.user.id, name=device)
+    api_key = ApiKey.create(user_id=g.user.id, name=data["device"])
     Session.commit()
 
+    LOG.info("API key created for user %s on device %s", g.user.email, data["device"])
     return jsonify(api_key=api_key.code), 201
 
 
 @api_bp.route("/logout", methods=["GET"])
 @require_api_auth
 def logout():
-    """
-    Log user out on the web, i.e. remove the cookie
-
-    Output:
-    - 200
-    """
+    """Log the user out on the web, removing the session cookie."""
     logout_session()
     response = make_response(jsonify(msg="User is logged out"), 200)
-    response.delete_cookie(SESSION_COOKIE_NAME)
+    response.delete_cookie(SESSION_COOKIE_NAME, httponly=True, secure=True)
 
+    LOG.info("User %s logged out", g.user.email)
     return response
 
 
 @api_bp.route("/stats")
 @require_api_auth
 def user_stats():
-    """
-    Return stats
-
-    Output as json
-    - nb_alias
-    - nb_forward
-    - nb_reply
-    - nb_block
-
-    """
-    user = g.user
-    stats = get_stats(user)
-
+    """Return user statistics such as alias count, forwards, replies, and blocks."""
+    stats = get_stats(g.user)
     return jsonify(dataclasses.asdict(stats))
